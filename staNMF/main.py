@@ -14,9 +14,9 @@ import pandas as pd
 from scipy.stats import pearsonr
 import scipy.stats as stats
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import spams
+matplotlib.use('Agg')
 
 
 class staNMF:
@@ -83,8 +83,8 @@ class staNMF:
 
     def __init__(self, filename, folderID="", K1=15, K2=30,
                  sample_weights=False, seed=123, replicates=100,
-                 NMF_finished=False, parallel=False, 
-                 flip = False):
+                 NMF_finished=False, parallel=False,
+                 flip=False):
         warnings.filterwarnings("ignore")
         self.K1 = K1
         self.K2 = K2
@@ -93,7 +93,7 @@ class staNMF:
         self.guess = np.array([])
         self.guessdict = {}
         self.parallel = parallel
-        self.flip = flip 
+        self.flip = flip
         # whether flip the matrix and use coefficients are dictionaries.
         #   That could be useful when the data has many rows
         if isinstance(replicates, int):
@@ -137,7 +137,11 @@ class staNMF:
         Called by runNMF
         '''
 
-        indexlist = np.random.choice(np.arange(1, X.shape[1]), K, replace=False)
+        indexlist = np.random.choice(
+                        np.arange(1, X.shape[1]),
+                        K,
+                        replace=False,
+                    )
         self.guess = np.asfortranarray(X[:, indexlist])
         self.guessdict[i] = indexlist
 
@@ -153,17 +157,15 @@ class staNMF:
         '''
         if not self.NMF_finished:
             if type(self.fn) != str:
-	        # if filename is not string
-		#   then assume it is numpy array already
+                # if filename is not string
+                #   then assume it is numpy array already
                 if self.flip:
                     self.X = np.asfortranarray(self.fn.T)
                     self.rowidmatrix = list(range(self.X.shape[1]))
                 else:
-                    self.X = np.asfortranarray(self.fn)                
+                    self.X = np.asfortranarray(self.fn)
                     self.rowidmatrix = list(range(self.X.shape[0]))
                 return
-
-	    
             csvfile = open(self.fn, "r")
             workingmatrix = pd.read_csv(csvfile, index_col=0)
             self.rowidmatrix = workingmatrix.index.values
@@ -195,7 +197,7 @@ class staNMF:
                 workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
 
             X1 = (np.array(workingmatrix).astype(float))
-            if self.flip:                                
+            if self.flip:
                 self.X = np.asfortranarray(X1.T)
             else:
                 self.X = np.asfortranarray(X1)
@@ -273,15 +275,15 @@ class staNMF:
                 if self.flip:
                     coefs = spams.lasso(
                         # data
-                        X = self.X,
+                        X=self.X,
                         # dict
-                        D = Dsolution,
+                        D=Dsolution,
                         # pos
-                        pos = True,
+                        pos=True,
                         # lambda 1
-                        lambda1 = 0,
-                        lambda2 = 0)
-                    Dsolution = coefs.toarray().T # flip back
+                        lambda1=0,
+                        lambda2=0)
+                    Dsolution = coefs.toarray().T  # flip back
                 # write solution to a csv file in the staNMFDicts/k=K/ folder
                 outputfilename = "factorization_" + str(l) + ".csv"
                 outputfilepath = os.path.join(path, outputfilename)
@@ -338,12 +340,12 @@ class staNMF:
         Called by instability()
 
         '''
-        #corrmatrix = []
-        #for a in range(k):
-        #    for b in range(k):
-        #        c = np.corrcoef(A[:, a], B[:, b])
-        #        corrmatrix.append(c[0][1])
-        #return np.asarray(corrmatrix).reshape(k, k)
+        # corrmatrix = []
+        # for a in range(k):
+        #     for b in range(k):
+        #         c = np.corrcoef(A[:, a], B[:, b])
+        #         corrmatrix.append(c[0][1])
+        # return np.asarray(corrmatrix).reshape(k, k)
         A_std = sklearn.preprocessing.scale(A)
         B_std = sklearn.preprocessing.scale(B)
         return A_std.T @ B_std / A.shape[0]
@@ -417,23 +419,32 @@ class staNMF:
                         distMat[i][j] = self.amariMaxError(CORR)
                         distMat[j][i] = distMat[i][j]
 
-                self.instabilitydict[k] = (np.sum(distMat) / (numReplicates *
-                                           (numReplicates-1)))
-                # The standard deviation of the instability is tricky, because it is a U-statistic and in general the formula is quite tedious. Fortunately, there is a easy-to-understand upper bound.
-                self.instability_std[k] = (np.sum(distMat**2) / (numReplicates *(numReplicates - 1)) - self.instabilitydict[k]**2)**.5 * (2 / distMat.shape[0])**.5
-                
-
+                self.instabilitydict[k] = (
+                    np.sum(distMat) / (numReplicates * (numReplicates-1))
+                )
+                # The standard deviation of the instability is tricky:
+                # It is a U-statistic and in general hard to compute std.
+                # Fortunately, there is a easy-to-understand upper bound.
+                self.instability_std[k] = (
+                    np.sum(distMat ** 2)
+                    / (numReplicates * (numReplicates - 1))
+                    - self.instabilitydict[k] ** 2
+                ) ** .5 * (2 / distMat.shape[0]) ** .5
                 if self.parallel:
                     outputfile = open(str(path + "instability.csv"), "w")
                     outputwriter = csv.writer(outputfile)
-                    outputwriter.writerow([k, self.instabilitydict[k], self.instability_std[k]])
+                    outputwriter.writerow(
+                        [k, self.instabilitydict[k], self.instability_std[k]],
+                    )
                     outputfile.close()
 
         if not self.parallel:
             outputfile = open("instability.csv", "w")
             outputwriter = csv.writer(outputfile)
             for i in sorted(self.instabilitydict):
-                outputwriter.writerow([i, self.instabilitydict[i], self.instability_std[k]])
+                outputwriter.writerow(
+                    [i, self.instabilitydict[i], self.instability_std[k]],
+                )
 
     def get_instability(self):
         '''
@@ -496,9 +507,12 @@ class staNMF:
         if xmin == -1:
             xmin = self.K1 - .1
         if ymax == 0:
-            ymax = max(self.instabilityarray) + max(self.instabilityarray_std)*2+ (max(self.instabilityarray) /
-                                             len(self.instabilityarray))
-        plt.errorbar(x = kArray, y = self.instabilityarray, yerr = np.array(self.instabilityarray_std)*2)
+            ymax = max(self.instabilityarray) \
+                   + max(self.instabilityarray_std) * 2 \
+                   + (max(self.instabilityarray) / len(self.instabilityarray))
+        plt.errorbar(x=kArray,
+                     y=self.instabilityarray,
+                     yerr=np.array(self.instabilityarray_std)*2)
         plt.axis([xmin, xmax, ymin, ymax])
         plt.xlabel(xlab)
         plt.ylabel(ylab)
