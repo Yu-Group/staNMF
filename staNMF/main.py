@@ -10,13 +10,68 @@ import sklearn.preprocessing
 from timeit import default_timer as timer
 
 import numpy as np
+from joblib import load, dump
 import pandas as pd
 from scipy.stats import pearsonr
 import scipy.stats as stats
 import matplotlib
 import matplotlib.pyplot as plt
-import spams
 matplotlib.use('Agg')
+
+
+def load_data(filename):
+    '''
+    Loads full data matrix from .csv file into numpy array; if the
+    self.sample_weights variable is True, weights column names by their
+    number of replicate occurances
+
+    Usage:
+    Called by constructor
+
+    '''
+    if not self.NMF_finished:
+        if type(self.fn) != str:
+            # if filename is not string
+            #   then assume it is numpy array already
+            if self.flip:
+                self.X = np.asfortranarray(self.fn.T)
+                self.rowidmatrix = list(range(self.X.shape[1]))
+            else:
+                self.X = np.asfortranarray(self.fn)
+                self.rowidmatrix = list(range(self.X.shape[0]))
+            return
+        csvfile = open(self.fn, "r")
+        workingmatrix = pd.read_csv(csvfile, index_col=0)
+        self.rowidmatrix = workingmatrix.index.values
+        colnames = workingmatrix.columns.values
+
+        if self.sample_weights is not False:
+            if isinstance(self.sample_weights, list):
+                if len(self.sample_weights) != len(colnames):
+                    raise ValueError("sample_weights length must equal the"
+                                     " number of columns.")
+                else:
+                    weight = self.sample_weights
+            else:
+                # Special formatting case for Wu et al. expression data
+                if self.fn == os.path.join("data",
+                                           "WuExampleExpression.csv"):
+                    colnames = [(str(x).split('.'))[0] for x in colnames]
+
+                colUnique = np.unique(colnames)
+                colNum = np.zeros(len(colUnique))
+                weight = np.zeros(len(colnames))
+
+                for i in range(len(colUnique)):
+                    colNum[i] = list(colnames).count(colUnique[i])
+                    weight[i] = 1/(colNum[i])
+
+            workingmatrix = workingmatrix.apply(lambda x: weight * x,
+                                                axis=1)
+            workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
+
+        X1 = (np.array(workingmatrix).astype(float))
+
 
 class staNMF:
     '''Python 3 implementation of Siqi Wu's 03/2016 Stability NMF (staNMF)
@@ -28,11 +83,11 @@ class staNMF:
     ----------
     filename : str or numpy array
         This is either a string specifying a csv-format file containing a table
-        with columns and rows labeled ('example' will point to the default 
+        with columns and rows labeled ('example' will point to the default
         dataset), or a 2d numpy array containing the data.
 
     folderID : str, optional with default ""
-        allows user to specify a unique (to the user's working directory) 
+        allows user to specify a unique (to the user's working directory)
         identifier for the 'staNMFDicts' folder that the runNMF method creates.
 
     K1 : int, optional with default 15
@@ -42,10 +97,10 @@ class staNMF:
         highest number of PP's (K) tested
 
     sample_weights : bool or list, optional, default False
-        performs weighting step on full data matrix to account for multiple 
-        columns of the same name (filename='example' defaults to special case 
+        performs weighting step on full data matrix to account for multiple
+        columns of the same name (filename='example' defaults to special case
         of weighting (delimited by ".")) If sample_weights is a list of custom
-        weights, it must be equal in length to the number of columns in the 
+        weights, it must be equal in length to the number of columns in the
         matrix, and this list of weights will be applied across columns.
 
     seed : int, optional with default 123
@@ -64,7 +119,7 @@ class staNMF:
         range [K1, K2], set to True.
 
     parallel : bool, optional with default False
-        True if NMF is to be run in parallel such that the instability 
+        True if NMF is to be run in parallel such that the instability
         calculation should write a file for each K containing its instability
         index.
 
@@ -103,79 +158,29 @@ class staNMF:
         self.stability_finished = False
         np.random.seed(self.seed)
 
-    def load_data(self):
+    def runNMF(self, nmf_class, **kwargs):
         '''
-        Loads full data matrix from .csv file into numpy array; if the
-        self.sample_weights variable is True, weights column names by their
-        number of replicate occurances
+        Iterate through range of integers between the K1 and K2 provided (By
+        default, K1=15 and K2=30), run NMF using the model; output NMF matrix
+        files (.csv form).
 
-        Usage:
-        Called by constructor
+        Parameters
+        ----------
+        nmf_class : a class that can be initiated to fit NMF models
 
-        '''
-        if not self.NMF_finished:
-            if type(self.fn) != str:
-                # if filename is not string
-                #   then assume it is numpy array already
-                if self.flip:
-                    self.X = np.asfortranarray(self.fn.T)
-                    self.rowidmatrix = list(range(self.X.shape[1]))
-                else:
-                    self.X = np.asfortranarray(self.fn)
-                    self.rowidmatrix = list(range(self.X.shape[0]))
-                return
-            csvfile = open(self.fn, "r")
-            workingmatrix = pd.read_csv(csvfile, index_col=0)
-            self.rowidmatrix = workingmatrix.index.values
-            colnames = workingmatrix.columns.values
+        Returns
+        -------
+        None
 
-            if self.sample_weights is not False:
-                if isinstance(self.sample_weights, list):
-                    if len(self.sample_weights) != len(colnames):
-                        raise ValueError("sample_weights length must equal the"
-                                         " number of columns.")
-                    else:
-                        weight = self.sample_weights
-                else:
-                    # Special formatting case for Wu et al. expression data
-                    if self.fn == os.path.join("data",
-                                               "WuExampleExpression.csv"):
-                        colnames = [(str(x).split('.'))[0] for x in colnames]
-
-                    colUnique = np.unique(colnames)
-                    colNum = np.zeros(len(colUnique))
-                    weight = np.zeros(len(colnames))
-
-                    for i in range(len(colUnique)):
-                        colNum[i] = list(colnames).count(colUnique[i])
-                        weight[i] = 1/(colNum[i])
-
-                workingmatrix = workingmatrix.apply(lambda x: weight * x,
-                                                    axis=1)
-                workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
-
-            X1 = (np.array(workingmatrix).astype(float))
-
-    def runNMF(self, **kwargs):
-        '''
-        Iterates through range of integers between the K1 and K2 provided (By
-        default, K1=15 and K2=30), runs NMF using SPAMS package; outputs
-        NMF matrix files (.csv form) and updates self.guessdict containing the
-        columns selected for the initial guess input(as calculated by
-        staNMF.initialguess())
-
-        Usage: Called by user (ex: '$ instance.runNMF()')
-
-        Arguments: Optional **kwargs allows user to update spams.trainDL()
-        parameters
-
-        Return: None
-
-        Output:
+        Side effects
+        ------------
         (k2-k1) folders, each containing files for every replicate
-        (labeled factorization_<replicate>.csv) , and each containing
-        a 'selectedcolumns.txt' file, which prints 'self.guessdict', a
-        dictionary with keys <factorzation #>, values <columns selected>
+        (labeled nmf_model_<nmf_class>_<replicate>.joblib).
+
+        Raises
+        ------
+        OSError
+            the path cannot be created.
 
         '''
 
@@ -194,64 +199,19 @@ class staNMF:
 
             print("Working on " + str(K) + "...\n")
 
-            param = {"numThreads": -1,
-                     # minibatch size
-                     "batchsize": min(1024, n),
-                     # Number of columns in solution
-                     "K": int(K),
-                     "lambda1": 0,
-                     # Number of iterations to go into this round of NMF
-                     "iter": 500,
-                     # Specify optimization problem to solve
-                     "mode": 2,
-                     # Specify convex set
-                     "modeD": 0,
-                     # Positivity constraint on coefficients
-                     "posAlpha": True,
-                     # Positivity constraint on solution
-                     "posD": True,
-                     # Limited information about progress
-                     "verbose": False,
-                     "gamma1": 0}
-
-            for p in param:
-                if p not in kwargs:
-                    kwargs[p] = param[p]
-
+            # create an object from the nmf_class
             for l in self.replicates:
-                self.initialguess(self.X, K, l)
-                Dsolution = spams.trainDL(
-                    # Matrix
-                    self.X,
-                    # Initial guess as provided by initialguess()
-                    D=self.guess,
-                    **kwargs)
-                if self.flip:
-                    coefs = spams.lasso(
-                        # data
-                        X=self.X,
-                        # dict
-                        D=Dsolution,
-                        # pos
-                        pos=True,
-                        # lambda 1
-                        lambda1=0,
-                        lambda2=0)
-                    Dsolution = coefs.toarray().T  # flip back
-                # write solution to a csv file in the staNMFDicts/k=K/ folder
-                outputfilename = "factorization_" + str(l) + ".csv"
+                nmf_model = nmf_class(
+                    n_components=K,
+                    seed=self.seed + 100 * l
+                )
+                nmf_model.fit(X, **kwargs)  # fit nmf model
+                # write model to a joblib file in the staNMFDicts/k=K/ folder
+                outputfilename = (
+                    "nmf_model_" + nmf_model.tag + '_' + str(l) + ".joblib"
+                )
                 outputfilepath = os.path.join(path, outputfilename)
-
-                Dsolution1 = pd.DataFrame(Dsolution, index=self.rowidmatrix)
-                Dsolution1.to_csv(outputfilepath, header=None)
-
-            indexoutputstring = "selectedcolumns" + str(K) + ".csv"
-            indexoutputpath = os.path.join(path, indexoutputstring)
-
-            with open(indexoutputpath, "w") as indexoutputfile:
-                for m in sorted(self.guessdict):
-                    indexoutputfile.write(str(m) + '\t' +
-                                          str(self.guessdict[m]) + '\n')
+                dump(nmf_model, outputfilepath)
 
             self.NMF_finished = True
 
@@ -261,7 +221,7 @@ class staNMF:
         based on average distance between factorization solutions
 
         Return:
-        Amari distance distM
+       Amari distance distM
 
         Arguments:
         :param: correlation: k by k matrix of pearson correlations
@@ -294,12 +254,6 @@ class staNMF:
         Called by instability()
 
         '''
-        # corrmatrix = []
-        # for a in range(k):
-        #     for b in range(k):
-        #         c = np.corrcoef(A[:, a], B[:, b])
-        #         corrmatrix.append(c[0][1])
-        # return np.asarray(corrmatrix).reshape(k, k)
         A_std = sklearn.preprocessing.scale(A)
         B_std = sklearn.preprocessing.scale(B)
         return A_std.T @ B_std / A.shape[0]
