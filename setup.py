@@ -10,7 +10,7 @@ os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(
     name='staNMF',
-    version='0.3',
+    version='1.0',
     packages=['staNMF'],
     include_package_data=True,
     license='',
@@ -27,5 +27,5 @@ setup(
         'Programming Language :: Python :: 3',
         'Topic :: Scientific/Engineering :: Bio-Informatics',
     ],
-    install_requires=['numpy', 'pandas', 'scipy', 'matplotlib', 'sklearn', 'tensorboard'],
+    install_requires=['numpy', 'pandas', 'scipy', 'matplotlib', 'sklearn', 'spams', 'torch'],
 )

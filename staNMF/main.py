@@ -18,73 +18,61 @@ import matplotlib.pyplot as plt
 import spams
 matplotlib.use('Agg')
 
-
 class staNMF:
-    '''
-    2016 Amy E Campbell
+    '''Python 3 implementation of Siqi Wu's 03/2016 Stability NMF (staNMF)
 
-    Python 2.7 implementation of Siqi Wu's 03/2016 Stability NMF (staNMF)
+    Solves non-negative matrix factorization for a range of principal patterns
+    (PPs) with either different initializations or bootstrapped samples.
 
-    Solves non-negative matrix factorization over a range of principal patterns
-    (PPs) with randomly sampled initial NMF "guesses" for an n x m matrix using
-    the SPArse Modeling Software (J. Mairal, F. Bach, J. Ponce and G. Sapiro,
-    2010)
+    Parameters
+    ----------
+    filename : str or numpy array
+        This is either a string specifying a csv-format file containing a table
+        with columns and rows labeled ('example' will point to the default 
+        dataset), or a 2d numpy array containing the data.
 
-    USAGE:
-    Can be called and used by a script, imported as "staNMF"
-    (see requirements.txt for required packages)
+    folderID : str, optional with default ""
+        allows user to specify a unique (to the user's working directory) 
+        identifier for the 'staNMFDicts' folder that the runNMF method creates.
 
-    To read in Wu et al's 2016 drosophila spatial expression data, set:
-    filename = 'example'
+    K1 : int, optional with default 15
+        lowest number of PP's (K) tested
 
-    INPUT:
-    :param: filename (str, required) : Specify full file extension to a ".csv"
-    containing a table with columns and rows labeled, or set filename='example'
+    K2 : int, optional with default 30
+        highest number of PP's (K) tested
 
-    :param: folderID (str, optional with default ""): allows user to specify
-    a unique (to the user's working directory) identifier for the 'staNMFDicts'
-    folder that the runNMF() method creates
+    sample_weights : bool or list, optional, default False
+        performs weighting step on full data matrix to account for multiple 
+        columns of the same name (filename='example' defaults to special case 
+        of weighting (delimited by ".")) If sample_weights is a list of custom
+        weights, it must be equal in length to the number of columns in the 
+        matrix, and this list of weights will be applied across columns.
 
-    :param: K1 (int, optional with default 15): lowest # PP's (K) tested
+    seed : int, optional with default 123
+        sets numpy random seed
 
-    :param: K2 (int, optional with default 30): highest # PP's (K) tested
+    replicates : int or tuple of ints of length 2, optional with default
+    int 100
+        specify the bootstrapped repetitions to be performed on each value of K
+        for use in stability analysis; if a list of length 2: self.replicates
+            is set to a list of ints between the first and second elements of
+            this tuple. If int: self.replicates is set to range(integer).
 
-    :param: sample_weights (bool or list, optional, default False):
-    performs weighting step on full data matrix to account for multiple columns
-    of the same name (filename='example'defaults to special case of weighting
-    (delimited by ".")) If sample_weights is a list of custom weights, it must
-    be equal in length to the number of columns in the matrix, and this list of
-    weights will be applied across columns
+    NMF_finished : bool, optional with default False
+        True if runNMF has been completed for the dataset. To surpass NMF step
+        if fileID file already contains factorization solutions for X in your
+        range [K1, K2], set to True.
 
-    :param: seed (int, optional with default 123): sets numpy random seed
-
-    :param: replicates(int or tuple of ints of length 2, optional with default
-    int 100):
-    Specifies which/ how many bootstrapped repetitions to be performed on each
-    value of K, for use in stability analysis; if a list of length 2 is given,
-    self.replicates is set to a list of ints between the first and second
-    elements of this tuple. If it is set to an integer, self.replicates is set
-    to a list of ints between 0 and the given integer
-
-    Number of bootstrapped
-    repetitions of NMF to be performed on each value of K, for use in stability
-    analysis
-
-    :param: NMF_finished (bool, optional with default False): True if runNMF
-    has been completed for the dataset and k range for which you wish to
-    calculate instability. To surpass NMF step if fileID file already contains
-    factorization solutions for X in your range [K1, K2], set to True
-
-    :param: parallel (bool, optional with default False): True if NMF is to be
-    run in parallel such that the instability calculation should write a file
-    for each K containing its instability index
+    parallel : bool, optional with default False
+        True if NMF is to be run in parallel such that the instability 
+        calculation should write a file for each K containing its instability
+        index.
 
     '''
 
     def __init__(self, filename, folderID="", K1=15, K2=30,
                  sample_weights=False, seed=123, replicates=100,
-                 NMF_finished=False, parallel=False,
-                 flip=False):
+                 NMF_finished=False, parallel=False):
         warnings.filterwarnings("ignore")
         self.K1 = K1
         self.K2 = K2
@@ -93,9 +81,6 @@ class staNMF:
         self.guess = np.array([])
         self.guessdict = {}
         self.parallel = parallel
-        self.flip = flip
-        # whether flip the matrix and use coefficients are dictionaries.
-        #   That could be useful when the data has many rows
         if isinstance(replicates, int):
             self.replicates = range(replicates)
         elif isinstance(replicates, tuple):
@@ -117,33 +102,6 @@ class staNMF:
         self.instabilityarray_std = []
         self.stability_finished = False
         np.random.seed(self.seed)
-
-    def initialguess(self, X, K, i):
-
-        '''
-        Randomly samples K columns from X; sets input matrix guess to be a
-        fortran array, and sets 'guesslist', a list of the column indices
-        sampled from X for this replication of NMF;
-
-        Arguments:
-        :param: X(numpy array, required): full matrix
-        :param: K(int, required): Number of columns to select at random to be
-        used as the 'initial guess' for the K PPs in the current simulation
-        of NMF
-        :param: i(int, required): Key at which indexlist will be stored(current
-        replicate of NMF)
-
-        Usage:
-        Called by runNMF
-        '''
-
-        indexlist = np.random.choice(
-                        np.arange(1, X.shape[1]),
-                        K,
-                        replace=False,
-                    )
-        self.guess = np.asfortranarray(X[:, indexlist])
-        self.guessdict[i] = indexlist
 
     def load_data(self):
         '''
@@ -197,10 +155,6 @@ class staNMF:
                 workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
 
             X1 = (np.array(workingmatrix).astype(float))
-            if self.flip:
-                self.X = np.asfortranarray(X1.T)
-            else:
-                self.X = np.asfortranarray(X1)
 
     def runNMF(self, **kwargs):
         '''
