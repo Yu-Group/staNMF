@@ -54,7 +54,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
     components_ : array, shape (n_components, n_features)
         the matrix of learned principle patterns, also known as dictionary
 
-    n_components_ : int
+    n_components : int
         the number of components
 
     n_iter_ : int
@@ -75,7 +75,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
                  n_components,
                  seed=None,
                  verbose=False):
-        self.n_components_ = n_components
+        self.n_components = n_components
         self.seed = seed
         self.verbose = verbose
 
@@ -94,7 +94,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
         self
         '''
         # Set the seed for numpy.random
-        np.random.set_state(self.seed)
+        np.random.seed(self.seed)
 
         # Set the parameters for spams
         param = {
@@ -102,7 +102,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
             # minibatch size
             "batchsize": min(1024, X.shape[0]),
             # Number of columns in solution
-            "K": int(self.n_components_),
+            "K": int(self.n_components),
             "lambda1": 0,
             # Number of iterations to go into this round of NMF
             "iter": 500,
@@ -125,12 +125,13 @@ class spams_nmf(BaseEstimator, TransformerMixin):
         self.n_iter_ = kwargs['iter']  # record the number of iterations
 
         # Compute the initialization dictionary
-        initialization = initialguess(X, self.K)
+        initialization = initialguess(X.T, self.n_components)
 
         # Use spams to compute the PPs
         Dsolution = spams.trainDL(
-                # Matrix
-                np.asfortranarray(X),
+                # Data matrix
+                # we flip X because spams requires features as rows
+                np.asfortranarray(X.T),
                 # Initial guess as provided by initialguess()
                 D=initialization,
                 **kwargs)
@@ -153,7 +154,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
         '''
         coefs = spams.lasso(
             # data
-            X=np.asfortranarray(X),
+            X=np.asfortranarray(X.T),
             # dict
             D=self.components_,
             # pos
@@ -161,4 +162,4 @@ class spams_nmf(BaseEstimator, TransformerMixin):
             lambda1=0,
             lambda2=0,
         )
-        return coefs.toarray()
+        return coefs.toarray().T

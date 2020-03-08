@@ -1,1 +1,1 @@
-from .main import staNMF
+from .main import (staNMF, load_example)

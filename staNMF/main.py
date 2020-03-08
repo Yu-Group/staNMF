@@ -5,7 +5,6 @@ import sys
 import warnings
 import argparse
 import collections
-import csv
 import sklearn.preprocessing
 from timeit import default_timer as timer
 
@@ -18,59 +17,71 @@ import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('Agg')
 
+FILENAME = "staNMFDicts_"
 
-def load_data(filename):
+
+def load_example():
     '''
-    Loads full data matrix from .csv file into numpy array; if the
-    self.sample_weights variable is True, weights column names by their
-    number of replicate occurances
+    Loads full data matrix from WuExampleExpression.csv file into numpy array;
+    weights column names by their number of replicate occurances
 
-    Usage:
-    Called by constructor
+    Returns
+    -------
+    X : array, shape (n_samples, n_features)
+        data matrix extracted from WuExampleExpression.csv
+
+    Examples
+    --------
+    >>> X = load_example()
 
     '''
-    if not self.NMF_finished:
-        if type(self.fn) != str:
-            # if filename is not string
-            #   then assume it is numpy array already
-            if self.flip:
-                self.X = np.asfortranarray(self.fn.T)
-                self.rowidmatrix = list(range(self.X.shape[1]))
-            else:
-                self.X = np.asfortranarray(self.fn)
-                self.rowidmatrix = list(range(self.X.shape[0]))
-            return
-        csvfile = open(self.fn, "r")
-        workingmatrix = pd.read_csv(csvfile, index_col=0)
-        self.rowidmatrix = workingmatrix.index.values
-        colnames = workingmatrix.columns.values
 
-        if self.sample_weights is not False:
-            if isinstance(self.sample_weights, list):
-                if len(self.sample_weights) != len(colnames):
-                    raise ValueError("sample_weights length must equal the"
-                                     " number of columns.")
-                else:
-                    weight = self.sample_weights
-            else:
-                # Special formatting case for Wu et al. expression data
-                if self.fn == os.path.join("data",
-                                           "WuExampleExpression.csv"):
-                    colnames = [(str(x).split('.'))[0] for x in colnames]
+    workingmatrix = pd.read_csv('../Demo/WuExampleExpression.csv', index_col=0)
 
-                colUnique = np.unique(colnames)
-                colNum = np.zeros(len(colUnique))
-                weight = np.zeros(len(colnames))
+    # weight each column (gene) by 1 / its occurences in replicates
+    colnames = workingmatrix.columns.values
+    colnames = [(str(x).split('.'))[0] for x in colnames]
+    colUnique = np.unique(colnames)
+    colNum = np.zeros(len(colUnique))
+    weight = np.zeros(len(colnames))
 
-                for i in range(len(colUnique)):
-                    colNum[i] = list(colnames).count(colUnique[i])
-                    weight[i] = 1/(colNum[i])
+    for i in range(len(colUnique)):
+        colNum[i] = list(colnames).count(colUnique[i])
+        weight[i] = 1/(colNum[i])
 
-            workingmatrix = workingmatrix.apply(lambda x: weight * x,
-                                                axis=1)
-            workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
+    workingmatrix = workingmatrix.apply(
+        lambda x: weight * x,
+        axis=1,
+    )
+    workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
 
-        X1 = (np.array(workingmatrix).astype(float))
+    X = (np.array(workingmatrix).astype(float)).T
+    return X
+
+
+def findcorrelation(self, A, B):
+    '''
+    Construct k by k matrix of Pearson product-moment correlation
+    coefficients for every combination of two columns in A and B
+
+    Parameters
+    ----------
+    A : array, shape (n_components, n_features)
+        first NMF solution matrix
+
+    B : array, shape (n_components, n_features)
+        second NMF solution matrix, of same dimensions as A
+
+    Returns
+    -------
+    X : array shape (n_components, n_components)
+        array[a][b] is the correlation between column 'a' of X
+        and column 'b'
+
+    '''
+    A_std = sklearn.preprocessing.scale(A)
+    B_std = sklearn.preprocessing.scale(B)
+    return A_std.T @ B_std / A.shape[0]
 
 
 class staNMF:
@@ -81,14 +92,12 @@ class staNMF:
 
     Parameters
     ----------
-    filename : str or numpy array
-        This is either a string specifying a csv-format file containing a table
-        with columns and rows labeled ('example' will point to the default
-        dataset), or a 2d numpy array containing the data.
+    X : numpy array, shape (n_samples, n_features)
+        2d numpy array containing the data.
 
     folderID : str, optional with default ""
         allows user to specify a unique (to the user's working directory)
-        identifier for the 'staNMFDicts' folder that the runNMF method creates.
+        identifier for the FILENAME folder that the runNMF method creates.
 
     K1 : int, optional with default 15
         lowest number of PP's (K) tested
@@ -96,15 +105,8 @@ class staNMF:
     K2 : int, optional with default 30
         highest number of PP's (K) tested
 
-    sample_weights : bool or list, optional, default False
-        performs weighting step on full data matrix to account for multiple
-        columns of the same name (filename='example' defaults to special case
-        of weighting (delimited by ".")) If sample_weights is a list of custom
-        weights, it must be equal in length to the number of columns in the
-        matrix, and this list of weights will be applied across columns.
-
     seed : int, optional with default 123
-        sets numpy random seed
+        set numpy random seed
 
     replicates : int or tuple of ints of length 2, optional with default
     int 100
@@ -125,13 +127,12 @@ class staNMF:
 
     '''
 
-    def __init__(self, filename, folderID="", K1=15, K2=30,
-                 sample_weights=False, seed=123, replicates=100,
+    def __init__(self, X, folderID="", K1=15, K2=30,
+                 seed=123, replicates=100,
                  NMF_finished=False, parallel=False):
         warnings.filterwarnings("ignore")
         self.K1 = K1
         self.K2 = K2
-        self.sample_weights = sample_weights
         self.seed = seed
         self.guess = np.array([])
         self.guessdict = {}
@@ -141,22 +142,14 @@ class staNMF:
         elif isinstance(replicates, tuple):
             start, stop = replicates
             self.replicates = range(replicates[0], replicates[1])
-        self.X = []
-        if filename == 'example':
-            self.fn = os.path.join("data", "WuExampleExpression.csv")
-            self.sample_weights = True
-        else:
-            self.fn = filename
+        self.X = X
         self.folderID = folderID
-        self.rowidmatrix = []
         self.NMF_finished = NMF_finished
         self.instabilitydict = {}
         self.instability_std = {}
-        self.load_data()
         self.instabilityarray = []
         self.instabilityarray_std = []
         self.stability_finished = False
-        np.random.seed(self.seed)
 
     def runNMF(self, nmf_class, **kwargs):
         '''
@@ -188,8 +181,9 @@ class staNMF:
         numPatterns = np.arange(self.K1, self.K2+1)
         for k in range(len(numPatterns)):
             K = numPatterns[k]
-            path = str("./staNMFDicts" + str(self.folderID) + "/K=" + str(K) +
-                       "/")
+            path = (
+                "./" + FILENAME + self.folderID + "/K=" + str(K) + "/"
+            )
             try:
                 os.makedirs(path)
             except OSError:
@@ -205,10 +199,10 @@ class staNMF:
                     n_components=K,
                     seed=self.seed + 100 * l
                 )
-                nmf_model.fit(X, **kwargs)  # fit nmf model
-                # write model to a joblib file in the staNMFDicts/k=K/ folder
+                nmf_model.fit(self.X, **kwargs)  # fit nmf model
+                # write model to a joblib file in the path folder
                 outputfilename = (
-                    "nmf_model_" + nmf_model.tag + '_' + str(l) + ".joblib"
+                    "nmf_model_" + nmf_class.tag + '_' + str(l) + ".joblib"
                 )
                 outputfilepath = os.path.join(path, outputfilename)
                 dump(nmf_model, outputfilepath)
@@ -238,40 +232,28 @@ class staNMF:
 
         return distM
 
-    def findcorrelation(self, A, B, k):
+    def instability(self, nmf_class, k1=0, k2=0):
         '''
-        Construct k by k matrix of Pearson product-moment correlation
-        coefficients for every combination of two columns in A and B
-
-        :param: A : first NMF solution matrix
-        :param: B : second NMF solution matrix, of same dimensions as A
-        :param: k : number of columns in each matrix A and B
-
-        Return: numpy array of dimensions k by k, where array[a][b] is the
-        correlation between column 'a' of X and column 'b'
-
-        Usage:
-        Called by instability()
-
-        '''
-        A_std = sklearn.preprocessing.scale(A)
-        B_std = sklearn.preprocessing.scale(B)
-        return A_std.T @ B_std / A.shape[0]
-
-    def instability(self, k1=0, k2=0):
-        '''
-        Performs instability calculation for NMF factorizations for each K
+        Performs instability calculation for NMF models for each K
         within the range entered
 
-        Arguments:
+        Parameters
+        ----------
+        nmf_class : class
+            the nmf class for which we compute the stability
 
-        :param: k1 (int, optional, default self.K1): lower bound of K to
-        plot against stability
+        k1 : int, optional, default self.K1
+            lower bound of K to compute stability
 
-        :param: k2 (int, optional, default self.K2): upper bound of K to
-        plot against instability
+        k2 : int, optional, default self.K2
+            upper bound of K to compute instability
 
-        Return:
+        Returns
+        -------
+        None
+        
+        Side effects
+        ------------
         "instability.csv" containing instability index
         for each K between and including k1 and k2; updates
         self.instabilitydict (required for makeplot())
@@ -287,35 +269,28 @@ class staNMF:
             print("staNMF Error: runNMF is not complete\n")
         else:
             numPatterns = np.arange(k1, k2+1)
-
-            modelK = numPatterns[0]
-            path = str("./staNMFDicts" + str(self.folderID) + "/K=" +
-                       str(modelK)+"/")
-            inputfilename = "factorization_0.csv"
-            inputfilepath = os.path.join(path, inputfilename)
-            inputfile = open(inputfilepath, "r")
-            reader = csv.reader(inputfile, delimiter=',')
-            matrix1 = np.array(list(reader))
-            firstmatrix = matrix1[:, 1:]
-
-            inputfile.close()
-            d = np.size(firstmatrix, 0)
+            n_features = self.X.shape[1]
+            
+            # loop through each number of PPs
             for k in numPatterns:
                 print("Calculating instability for " + str(k))
-                path = str("./staNMFDicts" + str(self.folderID) + "/K=" +
-                           str(k)+"/")
-                Dhat = np.zeros((numReplicates, d, k))
+                
+                # load the dictionaries
+                path = (
+                    "./" + FILENAME + self.folderID + "/K=" + str(k)+"/"
+                )
+                Dhat = np.zeros((numReplicates, n_features, k))
 
                 for replicate in range(numReplicates):
-                    inputfilename = "factorization_" + str(replicate) + ".csv"
+                    inputfilename = (
+                        "nmf_model_" + nmf_class.tag 
+                        + "_" + str(replicate) + ".joblib"
+                    )
                     inputfilepath = os.path.join(path, inputfilename)
-                    with open(inputfilepath, "rb") as inputfile:
-                        matrix1 = pd.read_csv(inputfile, header=None)
-                        inputmatrix = matrix1.drop(0, axis=1)
-                        inputmatrix.columns = np.arange(0, matrix1.shape[1]-1)
+                    model = load(inputfilepath)
+                    Dhat[replicate] = model.components_
 
-                    Dhat[replicate] = inputmatrix
-
+                # compute the distance matrix between each pair of dicts
                 distMat = np.zeros(shape=(numReplicates, numReplicates))
 
                 for i in range(numReplicates):
@@ -323,10 +298,11 @@ class staNMF:
                         x = Dhat[i]
                         y = Dhat[j]
 
-                        CORR = self.findcorrelation(x, y, k)
+                        CORR = findcorrelation(x, y)
                         distMat[i][j] = self.amariMaxError(CORR)
                         distMat[j][i] = distMat[i][j]
 
+                # compute the instability and the standard deviation
                 self.instabilitydict[k] = (
                     np.sum(distMat) / (numReplicates * (numReplicates-1))
                 )
@@ -338,21 +314,14 @@ class staNMF:
                     / (numReplicates * (numReplicates - 1))
                     - self.instabilitydict[k] ** 2
                 ) ** .5 * (2 / distMat.shape[0]) ** .5
-                if self.parallel:
-                    outputfile = open(str(path + "instability.csv"), "w")
-                    outputwriter = csv.writer(outputfile)
-                    outputwriter.writerow(
-                        [k, self.instabilitydict[k], self.instability_std[k]],
-                    )
-                    outputfile.close()
-
-        if not self.parallel:
-            outputfile = open("instability.csv", "w")
-            outputwriter = csv.writer(outputfile)
-            for i in sorted(self.instabilitydict):
-                outputwriter.writerow(
-                    [i, self.instabilitydict[i], self.instability_std[k]],
-                )
+                
+                # write the result into csv file
+                outputfile = path + "instability.csv"
+                pd.DataFrame({
+                    'K': [k],
+                    'instability': [self.instabilitydict[k]],
+                    'instability_std': [self.instability_std[k]],
+                }).to_csv(outputfile, mode='a', header=False, index=False)
 
     def get_instability(self):
         '''
@@ -376,40 +345,45 @@ class staNMF:
         Plots instability results for all K's between and including K1 and K2
         with K on the X axis and instability on the Y axis
 
-        Arguments:
+        Parameters
+        ----------
 
-        :param: dataset_title (str, optional, default "Drosophila
-        Expression Data")
+        dataset_title : str, optional, default "Drosophila
+            Expression Data"
+            The title used in the plot
 
-        :param: ymax (float, optional,  default
-        largest Y + (largest Y/ # of points)
+        ymax : float, optional,  default
+            largest Y + largest std(Y) * 2  + (largest Y/ # of points)
+            the maximum y axis limit
 
-        :param: xmax (float, optional, default K2+1)
+        xmax : float, optional, default K2+1
 
-        :param: xlab (string, default "K") x-axis label
+        xlab : string, default "K"
+            x-axis label
 
-        :param: ylab (string, default "Instability Index") y-axis label
+        ylab : string, default "Instability Index"
+            y-axis label
 
-        Returns: None, saves plot as <dataset_title>.png
+        Returns
+        -------
+        None
 
-        Usage: Called by user to generate plot
+        Side effects
+        ------------
+        A png file named <dataset_title>.png is saved.
+
         '''
         kArray = []
         self.instabilityarray = []
         self.instabilityarray_std = []
-        if self.parallel:
-            for K in range(self.K1, self.K2+1):
-                kpath = "./staNMFDicts{}/K={}/instability.csv".format(
-                                                      self.folderID, K)
-                df = pd.read_csv(kpath)
-                kArray.append(int(df.columns[0]))
-                self.instabilityarray.append(float(df.columns[1]))
-                self.instabilityarray_std.append(float(df.columns[2]))
-        else:
-            for i in sorted(self.instabilitydict):
-                kArray.append(i)
-                self.instabilityarray.append(self.instabilitydict[i])
-                self.instabilityarray_std.append(self.instability_std[i])
+        for K in range(self.K1, self.K2+1):
+            kpath = (
+                "./" + FILENAME + "{}/K={}/instability.csv"
+            ).format(self.folderID, K)
+            df = pd.read_csv(kpath, header=None, index_col=False)
+            kArray.append(int(df.iloc[0, 0]))
+            self.instabilityarray.append(float(df.iloc[0, 1]))
+            self.instabilityarray_std.append(float(df.iloc[0, 2]))
         if xmax == 0:
             xmax = self.K2 + 1
         if xmin == -1:
@@ -442,5 +416,5 @@ class staNMF:
         each K you wish to delete.
         '''
         for K in k_list:
-            path = "./staNMFDicts{}/K={}/".format(self.folderID, K)
+            path = ("./" + FILENAME + "{}/K={}/").format(self.folderID, K)
             shutil.rmtree(path)
