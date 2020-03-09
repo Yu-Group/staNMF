@@ -50,6 +50,9 @@ class spams_nmf(BaseEstimator, TransformerMixin):
     verbose : bool, optional with default False
         whether to print out the intermediate results
 
+    arguments : dict, optional with default {}
+        the parameters used for spams package
+
     Attributes
     ----------
     components_ : array, shape (n_components, n_features)
@@ -75,13 +78,47 @@ class spams_nmf(BaseEstimator, TransformerMixin):
                  n_components=None,
                  random_state=None,
                  bootstrap=False,
-                 verbose=False):
+                 verbose=False,
+                 arguments={}):
         self.n_components = n_components
         self.random_state = random_state
         self.bootstrap = bootstrap
         self.verbose = verbose
+        # Set the parameters for spams
+        param = {
+            "numThreads": -1,
+            # minibatch size
+            "batchsize": 512,
+            # Number of columns in solution
+            "K": n_components,
+            "lambda1": 0,
+            # Number of iterations to go into this round of NMF
+            "iter": 2000,
+            # Specify optimization problem to solve
+            "mode": 2,
+            # Specify convex set
+            "modeD": 0,
+            # Positivity constraint on coefficients
+            "posAlpha": True,
+            # Positivity constraint on solution
+            "posD": True,
+            # Limited information about progress
+            "verbose": False,
+            "gamma1": 0,
+        }
+        self.arguments = param
+        for p in self.arguments:
+            if p in arguments:
+                self.arguments[p] = arguments[p]
 
-    def fit(self, X, y=None, **kwargs):
+        self.n_iter_ = self.arguments['iter']  # record number of iterations
+
+    def set_n_components(self, K):
+        self.n_components = int(K)
+        # int is crucial because when K is double, code will be breakdown.
+        self.arguments['K'] = int(K)
+
+    def fit(self, X, y=None):
         ''' Fit a NMF model using the spams package
 
         Parameters
@@ -100,36 +137,14 @@ class spams_nmf(BaseEstimator, TransformerMixin):
 
         # Create bootstrapped X
         if self.bootstrap:
-            bootstrap_X = np.random.choice(X, X.shape[0], replace=True)
+            n_samples = X.shape[0]
+            bootstrap_X = X[np.random.choice(
+                n_samples,
+                n_samples,
+                replace=True
+            )]
         else:
             bootstrap_X = X
-        # Set the parameters for spams
-        param = {
-            "numThreads": -1,
-            # minibatch size
-            "batchsize": min(1024, bootstrap_X.shape[0]),
-            # Number of columns in solution
-            "K": int(self.n_components),
-            "lambda1": 0,
-            # Number of iterations to go into this round of NMF
-            "iter": 2000,
-            # Specify optimization problem to solve
-            "mode": 2,
-            # Specify convex set
-            "modeD": 0,
-            # Positivity constraint on coefficients
-            "posAlpha": True,
-            # Positivity constraint on solution
-            "posD": True,
-            # Limited information about progress
-            "verbose": False,
-            "gamma1": 0,
-        }
-
-        for p in param:
-            if p not in kwargs:
-                kwargs[p] = param[p]
-        self.n_iter_ = kwargs['iter']  # record the number of iterations
 
         # Compute the initialization dictionary
         initialization = initialguess(bootstrap_X.T, self.n_components)
@@ -141,11 +156,11 @@ class spams_nmf(BaseEstimator, TransformerMixin):
                 np.asfortranarray(bootstrap_X.T),
                 # Initial guess as provided by initialguess()
                 D=initialization,
-                **kwargs)
+                **self.arguments)
         self.components_ = Dsolution.T
         return self
 
-    def transform(self, X, **kwargs):
+    def transform(self, X):
         '''
         Compute the loadings of X using the learned components
 

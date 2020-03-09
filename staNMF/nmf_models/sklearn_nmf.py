@@ -44,7 +44,10 @@ class sklearn_nmf(NMF):
         self.shuffle = shuffle
         self.bootstrap = bootstrap
 
-    def fit(self, X, y=None, bootstrap=False, **kwargs):
+    def set_n_components(self, K):
+        self.n_components = K
+
+    def fit(self, X, y=None, **kwargs):
         '''
         Fit NMF model using sklearn package
 
@@ -68,9 +71,14 @@ class sklearn_nmf(NMF):
 
         # Create bootstrapped X
         if self.bootstrap:
-            bootstrap_X = np.random.choice(X, X.shape[0], replace=True)
+            n_samples = X.shape[0]
+            bootstrap_X = X[np.random.choice(
+                n_samples,
+                n_samples,
+                replace=True,
+            )]
         else:
             bootstrap_X = X
-        
+
         # Call the super fit method
-        return super(sklearn_nmf, self).fit(X, **kwargs)
+        return super(sklearn_nmf, self).fit(bootstrap_X, **kwargs)

@@ -4,7 +4,7 @@ import shutil
 import sys
 import warnings
 import sklearn.preprocessing
-
+from multiprocessing import Pool
 import numpy as np
 from joblib import load, dump
 import pandas as pd
@@ -15,10 +15,15 @@ matplotlib.use('Agg')
 FILENAME = "staNMFDicts_"
 
 
-def load_example():
+def load_example(reweight=False):
     '''
     Loads full data matrix from WuExampleExpression.csv file into numpy array;
     weights column names by their number of replicate occurances
+
+    Parameters
+    ----------
+    reweight : bool, optional with default False
+        whether to reweight the data matrix by 1 / occurences
 
     Returns
     -------
@@ -33,18 +38,19 @@ def load_example():
 
     workingmatrix = pd.read_csv('../Demo/WuExampleExpression.csv', index_col=0)
 
-    # weight each column (gene) by 1 / its occurences in replicates
-    colnames = workingmatrix.columns.values
-    colnames = [(str(x).split('.'))[0] for x in colnames]
-    weight = np.zeros(len(colnames))
+    if reweight:
+        # weight each column (gene) by 1 / its occurences in replicates
+        colnames = workingmatrix.columns.values
+        colnames = [(str(x).split('.'))[0] for x in colnames]
+        weight = np.zeros(len(colnames))
 
-    for i in range(len(colnames)):
-        weight[i] = 1/colnames.count(colnames[i])
+        for i in range(len(colnames)):
+            weight[i] = 1/colnames.count(colnames[i])
 
-    workingmatrix = workingmatrix.apply(
-        lambda x: weight * x,
-        axis=1,
-    )
+        workingmatrix = workingmatrix.apply(
+            lambda x: weight * x,
+            axis=1,
+        )
 
     X = (np.array(workingmatrix).astype(float)).T
     return X
@@ -102,6 +108,23 @@ def amariMaxError(correlation):
     return distM
 
 
+# Define a worker function useful for parallelism
+def f(model, X, K, seed, l, path):
+    # set the number of components
+    model.set_n_components(K)
+    # set the random state
+    if seed is not None:
+        model.random_state = seed + 100 * l
+    model.fit(X)  # fit nmf model
+    # write model to a joblib file in the path folder
+    outputfilename = (
+        "nmf_model_" + model.__class__.__name__
+        + '_' + str(l) + ".joblib"
+    )
+    outputfilepath = os.path.join(path, outputfilename)
+    dump(model, outputfilepath)
+
+
 class staNMF:
     '''Python 3 implementation of Siqi Wu's 03/2016 Stability NMF (staNMF)
 
@@ -116,6 +139,9 @@ class staNMF:
     folderID : str, optional with default ""
         allows user to specify a unique (to the user's working directory)
         identifier for the FILENAME folder that the runNMF method creates.
+
+    processes : int, optional with default 3
+        the number of processes to use when parallel is True
 
     K1 : int, optional with default 15
         lowest number of PP's (K) tested
@@ -146,7 +172,7 @@ class staNMF:
     '''
 
     def __init__(self, X, folderID="", K1=15, K2=30,
-                 seed=123, replicates=100,
+                 seed=123, replicates=100, processes=3,
                  NMF_finished=False, parallel=False):
         warnings.filterwarnings("ignore")
         self.K1 = K1
@@ -155,6 +181,7 @@ class staNMF:
         self.guess = np.array([])
         self.guessdict = {}
         self.parallel = parallel
+        self.processes = processes
         if isinstance(replicates, int):
             self.replicates = range(replicates)
         elif isinstance(replicates, tuple):
@@ -169,7 +196,7 @@ class staNMF:
         self.instabilityarray_std = []
         self.stability_finished = False
 
-    def runNMF(self, nmf_model, **kwargs):
+    def runNMF(self, nmf_model):
         '''
         Iterate through range of integers between the K1 and K2 provided (By
         default, K1=15 and K2=30), run NMF using the model; output NMF matrix
@@ -211,20 +238,29 @@ class staNMF:
 
             print("Working on K = {}...".format(K))
 
-            # fit nmf_models
-            for l in self.replicates:
-                # set the number of components
-                nmf_model.n_components = K
-                # set the random state
-                nmf_model.random_state = self.seed + 100 * l
-                nmf_model.fit(self.X, **kwargs)  # fit nmf model
-                # write model to a joblib file in the path folder
-                outputfilename = (
-                    "nmf_model_" + nmf_model.__class__.__name__
-                    + '_' + str(l) + ".joblib"
-                )
-                outputfilepath = os.path.join(path, outputfilename)
-                dump(nmf_model, outputfilepath)
+            if not self.parallel:
+                # fit nmf_models
+                for l in self.replicates:
+                    # set the number of components
+                    nmf_model.set_n_components(K)
+                    # set the random state
+                    if self.seed is not None:
+                        nmf_model.random_state = self.seed + 100 * l
+                    nmf_model.fit(self.X)  # fit nmf model
+                    # write model to a joblib file in the path folder
+                    outputfilename = (
+                        "nmf_model_" + nmf_model.__class__.__name__
+                        + '_' + str(l) + ".joblib"
+                    )
+                    outputfilepath = os.path.join(path, outputfilename)
+                    dump(nmf_model, outputfilepath)
+            else:
+                pool = Pool(self.processes)
+                parameters = [
+                    (nmf_model, self.X, K, self.seed, l, path)
+                    for l in self.replicates
+                ]
+                pool.starmap(f, parameters, chunksize=10)
 
             self.NMF_finished = True
 
