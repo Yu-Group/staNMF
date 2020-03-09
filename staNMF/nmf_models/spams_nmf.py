@@ -36,21 +36,22 @@ class spams_nmf(BaseEstimator, TransformerMixin):
 
     Parameteres
     -----------
-    n_components : int
-        the number of patterns in NMF
+    n_components : int, optional with default None
+        the number of patterns in NMF. If None, can be set later using
+        self.n_components = <integer>.
 
-    seed : int, optional with default None
+    random_state : int, optional with default None
         the random seed used for determine initialization, None means that
         we use the default random seed, which will be different each time.
+
+    bootstrap : bool, optional with default False
+        Whether bootstrap the input matrix X
 
     verbose : bool, optional with default False
         whether to print out the intermediate results
 
     Attributes
     ----------
-    tag : str, static
-        a tag of the class name
-
     components_ : array, shape (n_components, n_features)
         the matrix of learned principle patterns, also known as dictionary
 
@@ -69,14 +70,15 @@ class spams_nmf(BaseEstimator, TransformerMixin):
     TODO : add refs to spams package
 
     '''
-    tag = 'spams_nmf'
 
     def __init__(self,
-                 n_components,
-                 seed=None,
+                 n_components=None,
+                 random_state=None,
+                 bootstrap=False,
                  verbose=False):
         self.n_components = n_components
-        self.seed = seed
+        self.random_state = random_state
+        self.bootstrap = bootstrap
         self.verbose = verbose
 
     def fit(self, X, y=None, **kwargs):
@@ -94,18 +96,23 @@ class spams_nmf(BaseEstimator, TransformerMixin):
         self
         '''
         # Set the seed for numpy.random
-        np.random.seed(self.seed)
+        np.random.seed(self.random_state)
 
+        # Create bootstrapped X
+        if self.bootstrap:
+            bootstrap_X = np.random.choice(X, X.shape[0], replace=True)
+        else:
+            bootstrap_X = X
         # Set the parameters for spams
         param = {
             "numThreads": -1,
             # minibatch size
-            "batchsize": min(1024, X.shape[0]),
+            "batchsize": min(1024, bootstrap_X.shape[0]),
             # Number of columns in solution
             "K": int(self.n_components),
             "lambda1": 0,
             # Number of iterations to go into this round of NMF
-            "iter": 500,
+            "iter": 2000,
             # Specify optimization problem to solve
             "mode": 2,
             # Specify convex set
@@ -125,17 +132,17 @@ class spams_nmf(BaseEstimator, TransformerMixin):
         self.n_iter_ = kwargs['iter']  # record the number of iterations
 
         # Compute the initialization dictionary
-        initialization = initialguess(X.T, self.n_components)
+        initialization = initialguess(bootstrap_X.T, self.n_components)
 
         # Use spams to compute the PPs
         Dsolution = spams.trainDL(
                 # Data matrix
                 # we flip X because spams requires features as rows
-                np.asfortranarray(X.T),
+                np.asfortranarray(bootstrap_X.T),
                 # Initial guess as provided by initialguess()
                 D=initialization,
                 **kwargs)
-        self.components_ = Dsolution
+        self.components_ = Dsolution.T
         return self
 
     def transform(self, X, **kwargs):
@@ -156,7 +163,7 @@ class spams_nmf(BaseEstimator, TransformerMixin):
             # data
             X=np.asfortranarray(X.T),
             # dict
-            D=self.components_,
+            D=self.components_.T,
             # pos
             pos=True,
             lambda1=0,

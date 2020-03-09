@@ -3,16 +3,11 @@ import os
 import shutil
 import sys
 import warnings
-import argparse
-import collections
 import sklearn.preprocessing
-from timeit import default_timer as timer
 
 import numpy as np
 from joblib import load, dump
 import pandas as pd
-from scipy.stats import pearsonr
-import scipy.stats as stats
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('Agg')
@@ -41,35 +36,31 @@ def load_example():
     # weight each column (gene) by 1 / its occurences in replicates
     colnames = workingmatrix.columns.values
     colnames = [(str(x).split('.'))[0] for x in colnames]
-    colUnique = np.unique(colnames)
-    colNum = np.zeros(len(colUnique))
     weight = np.zeros(len(colnames))
 
-    for i in range(len(colUnique)):
-        colNum[i] = list(colnames).count(colUnique[i])
-        weight[i] = 1/(colNum[i])
+    for i in range(len(colnames)):
+        weight[i] = 1/colnames.count(colnames[i])
 
     workingmatrix = workingmatrix.apply(
         lambda x: weight * x,
         axis=1,
     )
-    workingmatrix = workingmatrix.applymap(lambda x: math.sqrt(x))
 
     X = (np.array(workingmatrix).astype(float)).T
     return X
 
 
-def findcorrelation(self, A, B):
+def findcorrelation(A, B):
     '''
     Construct k by k matrix of Pearson product-moment correlation
     coefficients for every combination of two columns in A and B
 
     Parameters
     ----------
-    A : array, shape (n_components, n_features)
+    A : array, shape (n_features, n_components)
         first NMF solution matrix
 
-    B : array, shape (n_components, n_features)
+    B : array, shape (n_features, n_components)
         second NMF solution matrix, of same dimensions as A
 
     Returns
@@ -82,6 +73,33 @@ def findcorrelation(self, A, B):
     A_std = sklearn.preprocessing.scale(A)
     B_std = sklearn.preprocessing.scale(B)
     return A_std.T @ B_std / A.shape[0]
+
+
+def amariMaxError(correlation):
+    '''
+    Compute what Wu et al. (2016) described as a 'amari-type error'
+    based on average distance between factorization solutions
+
+    Parameters
+    ----------
+    correlation: array, shape (n_components, n_components)
+        Pearson correlation matrix
+
+    Returns
+    -------
+    distM : double/float
+        Amari distance
+
+    '''
+
+    n, m = correlation.shape
+    maxCol = np.absolute(correlation).max(0)
+    colTemp = np.mean((1-maxCol))
+    maxRow = np.absolute(correlation).max(1)
+    rowTemp = np.mean((1-maxRow))
+    distM = (rowTemp + colTemp)/(2)
+
+    return distM
 
 
 class staNMF:
@@ -151,7 +169,7 @@ class staNMF:
         self.instabilityarray_std = []
         self.stability_finished = False
 
-    def runNMF(self, nmf_class, **kwargs):
+    def runNMF(self, nmf_model, **kwargs):
         '''
         Iterate through range of integers between the K1 and K2 provided (By
         default, K1=15 and K2=30), run NMF using the model; output NMF matrix
@@ -159,7 +177,7 @@ class staNMF:
 
         Parameters
         ----------
-        nmf_class : a class that can be initiated to fit NMF models
+        nmf_model : a model that can be used to fit NMF models
 
         Returns
         -------
@@ -191,56 +209,34 @@ class staNMF:
                     raise
             m, n = np.shape(self.X)
 
-            print("Working on " + str(K) + "...\n")
+            print("Working on K = {}...".format(K))
 
-            # create an object from the nmf_class
+            # fit nmf_models
             for l in self.replicates:
-                nmf_model = nmf_class(
-                    n_components=K,
-                    seed=self.seed + 100 * l
-                )
+                # set the number of components
+                nmf_model.n_components = K
+                # set the random state
+                nmf_model.random_state = self.seed + 100 * l
                 nmf_model.fit(self.X, **kwargs)  # fit nmf model
                 # write model to a joblib file in the path folder
                 outputfilename = (
-                    "nmf_model_" + nmf_class.tag + '_' + str(l) + ".joblib"
+                    "nmf_model_" + nmf_model.__class__.__name__
+                    + '_' + str(l) + ".joblib"
                 )
                 outputfilepath = os.path.join(path, outputfilename)
                 dump(nmf_model, outputfilepath)
 
             self.NMF_finished = True
 
-    def amariMaxError(self, correlation):
-        '''
-        Computes what Wu et al. (2016) described as a 'amari-type error'
-        based on average distance between factorization solutions
-
-        Return:
-       Amari distance distM
-
-        Arguments:
-        :param: correlation: k by k matrix of pearson correlations
-
-        Usage: Called by instability()
-        '''
-
-        n, m = correlation.shape
-        maxCol = np.absolute(correlation).max(0)
-        colTemp = np.mean((1-maxCol))
-        maxRow = np.absolute(correlation).max(1)
-        rowTemp = np.mean((1-maxRow))
-        distM = (rowTemp + colTemp)/(2)
-
-        return distM
-
-    def instability(self, nmf_class, k1=0, k2=0):
+    def instability(self, tag, k1=0, k2=0):
         '''
         Performs instability calculation for NMF models for each K
         within the range entered
 
         Parameters
         ----------
-        nmf_class : class
-            the nmf class for which we compute the stability
+        tag : str
+            the name of the nmf model to compute the stability
 
         k1 : int, optional, default self.K1
             lower bound of K to compute stability
@@ -251,7 +247,7 @@ class staNMF:
         Returns
         -------
         None
-        
+
         Side effects
         ------------
         "instability.csv" containing instability index
@@ -270,11 +266,9 @@ class staNMF:
         else:
             numPatterns = np.arange(k1, k2+1)
             n_features = self.X.shape[1]
-            
             # loop through each number of PPs
             for k in numPatterns:
                 print("Calculating instability for " + str(k))
-                
                 # load the dictionaries
                 path = (
                     "./" + FILENAME + self.folderID + "/K=" + str(k)+"/"
@@ -283,12 +277,12 @@ class staNMF:
 
                 for replicate in range(numReplicates):
                     inputfilename = (
-                        "nmf_model_" + nmf_class.tag 
+                        "nmf_model_" + tag
                         + "_" + str(replicate) + ".joblib"
                     )
                     inputfilepath = os.path.join(path, inputfilename)
                     model = load(inputfilepath)
-                    Dhat[replicate] = model.components_
+                    Dhat[replicate] = model.components_.T
 
                 # compute the distance matrix between each pair of dicts
                 distMat = np.zeros(shape=(numReplicates, numReplicates))
@@ -299,7 +293,7 @@ class staNMF:
                         y = Dhat[j]
 
                         CORR = findcorrelation(x, y)
-                        distMat[i][j] = self.amariMaxError(CORR)
+                        distMat[i][j] = amariMaxError(CORR)
                         distMat[j][i] = distMat[i][j]
 
                 # compute the instability and the standard deviation
@@ -314,7 +308,6 @@ class staNMF:
                     / (numReplicates * (numReplicates - 1))
                     - self.instabilitydict[k] ** 2
                 ) ** .5 * (2 / distMat.shape[0]) ** .5
-                
                 # write the result into csv file
                 outputfile = path + "instability.csv"
                 pd.DataFrame({
@@ -322,17 +315,20 @@ class staNMF:
                     'instability': [self.instabilitydict[k]],
                     'instability_std': [self.instability_std[k]],
                 }).to_csv(outputfile, mode='a', header=False, index=False)
+        # set the stability_finished to be True
+        self.stability_finished = True
 
     def get_instability(self):
         '''
         Retrieves instability values calculated in this instance of staNMF
 
-        Returns:
-        dictionary with keys K, values instability index
+        Returns
+        -------
+        self.instabilitydict : dict
+            dictionary with keys K, values instability index
 
-        Usage: Called by user (not required for output of 'instablity.csv', but
-        returns usable python dictionary of these calculations)
         '''
+
         if self.stability_finished:
             return self.instabilitydict
         else:
@@ -381,9 +377,9 @@ class staNMF:
                 "./" + FILENAME + "{}/K={}/instability.csv"
             ).format(self.folderID, K)
             df = pd.read_csv(kpath, header=None, index_col=False)
-            kArray.append(int(df.iloc[0, 0]))
-            self.instabilityarray.append(float(df.iloc[0, 1]))
-            self.instabilityarray_std.append(float(df.iloc[0, 2]))
+            kArray.append(int(df.iloc[-1, 0]))
+            self.instabilityarray.append(float(df.iloc[-1, 1]))
+            self.instabilityarray_std.append(float(df.iloc[-1, 2]))
         if xmax == 0:
             xmax = self.K2 + 1
         if xmin == -1:
@@ -399,8 +395,7 @@ class staNMF:
         plt.xlabel(xlab)
         plt.ylabel(ylab)
         plt.axes.titlesize = 'smaller'
-        plt.title(str('Stability NMF Results: Principal Patterns vs.'
-                      'Instability in ' + dataset_title))
+        plt.title(str(dataset_title))
         plotname = str(dataset_title + ".png")
         plt.savefig(plotname)
 
@@ -409,12 +404,17 @@ class staNMF:
         A storage-saving option that clears the entire directory of each K
         requested, including the instability.csv file in each folder
 
-        :param: k_list (list, required) list of K's to delete corresponding
-        directories of
+        Parameters
+        ----------
+        k_list : list
+            list of K's to delete corresponding directories of
 
-        NOTE: this should only be used after stability has been calculated for
+        Notes
+        -----
+        This should only be used after stability has been calculated for
         each K you wish to delete.
         '''
+
         for K in k_list:
             path = ("./" + FILENAME + "{}/K={}/").format(self.folderID, K)
             shutil.rmtree(path)
