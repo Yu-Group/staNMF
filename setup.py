@@ -27,5 +27,13 @@ setup(
         'Programming Language :: Python :: 3',
         'Topic :: Scientific/Engineering :: Bio-Informatics',
     ],
-    install_requires=['numpy', 'pandas', 'scipy', 'matplotlib', 'sklearn', 'spams', 'torch'],
+    install_requires=[
+        'numpy',
+        'pandas',
+        'scipy',
+        'matplotlib',
+        'sklearn',
+        'spams',
+        'torch',
+    ],
 )
