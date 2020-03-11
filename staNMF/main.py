@@ -10,7 +10,8 @@ from joblib import load, dump
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-matplotlib.use('Agg')
+from scipy.optimize import linear_sum_assignment
+#matplotlib.use('Agg')
 
 FILENAME = "staNMFDicts_"
 
@@ -45,7 +46,7 @@ def load_example(reweight=False):
         weight = np.zeros(len(colnames))
 
         for i in range(len(colnames)):
-            weight[i] = 1/colnames.count(colnames[i])
+            weight[i] = 1/colnames.count(colnames[i]) ** .5
 
         workingmatrix = workingmatrix.apply(
             lambda x: weight * x,
@@ -76,9 +77,9 @@ def findcorrelation(A, B):
         and column 'b'
 
     '''
-    A_std = sklearn.preprocessing.scale(A)
-    B_std = sklearn.preprocessing.scale(B)
-    return A_std.T @ B_std / A.shape[0]
+    A_std = sklearn.preprocessing.normalize(A, axis=0)
+    B_std = sklearn.preprocessing.normalize(B, axis=0)
+    return A_std.T @ B_std
 
 
 def amariMaxError(correlation):
@@ -89,7 +90,7 @@ def amariMaxError(correlation):
     Parameters
     ----------
     correlation: array, shape (n_components, n_components)
-        Pearson correlation matrix
+        cross correlation matrix
 
     Returns
     -------
@@ -105,6 +106,30 @@ def amariMaxError(correlation):
     rowTemp = np.mean((1-maxRow))
     distM = (rowTemp + colTemp)/(2)
 
+    return distM
+
+
+def HungrianError(correlation):
+    '''
+    Compute error via Hungrian error
+    based on average distance between factorization solutions
+
+    Parameters
+    ----------
+    correlation: array, shape (n_components, n_components)
+        cross correlation matrix
+
+    Returns
+    -------
+    distM : double/float
+        Hugrian distance
+
+    '''
+
+    n, m = correlation.shape
+    n, m = correlation.shape
+    x, y = linear_sum_assignment(-correlation)
+    distM = np.mean([1 - correlation[xx, yy] for xx, yy in zip(x, y)])
     return distM
 
 
@@ -169,11 +194,15 @@ class staNMF:
         calculation should write a file for each K containing its instability
         index.
 
+    chunksize : int, optional with default 10
+        the smallest number of tasks to assign to each worker
+
     '''
 
     def __init__(self, X, folderID="", K1=15, K2=30,
                  seed=123, replicates=100, processes=3,
-                 NMF_finished=False, parallel=False):
+                 NMF_finished=False, parallel=False,
+                 chunksize=10):
         warnings.filterwarnings("ignore")
         self.K1 = K1
         self.K2 = K2
@@ -195,6 +224,7 @@ class staNMF:
         self.instabilityarray = []
         self.instabilityarray_std = []
         self.stability_finished = False
+        self.chunksize = chunksize
 
     def runNMF(self, nmf_model):
         '''
@@ -224,6 +254,8 @@ class staNMF:
 
         self.NMF_finished = False
         numPatterns = np.arange(self.K1, self.K2+1)
+        if self.parallel:
+            pool = Pool(self.processes)
         for k in range(len(numPatterns)):
             K = numPatterns[k]
             path = (
@@ -255,14 +287,14 @@ class staNMF:
                     outputfilepath = os.path.join(path, outputfilename)
                     dump(nmf_model, outputfilepath)
             else:
-                pool = Pool(self.processes)
                 parameters = [
                     (nmf_model, self.X, K, self.seed, l, path)
                     for l in self.replicates
                 ]
-                pool.starmap(f, parameters, chunksize=10)
+                pool.starmap(f, parameters, chunksize=self.chunksize)
 
-            self.NMF_finished = True
+        self.NMF_finished = True
+        pool.close()
 
     def instability(self, tag, k1=0, k2=0):
         '''
@@ -329,7 +361,7 @@ class staNMF:
                         y = Dhat[j]
 
                         CORR = findcorrelation(x, y)
-                        distMat[i][j] = amariMaxError(CORR)
+                        distMat[i][j] = HungrianError(CORR)
                         distMat[j][i] = distMat[i][j]
 
                 # compute the instability and the standard deviation
