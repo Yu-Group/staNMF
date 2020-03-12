@@ -1,4 +1,5 @@
 *.png
+*.joblib
 *.csv
 **/*.ipynb_checkpoints
 # Distribution / packaging
