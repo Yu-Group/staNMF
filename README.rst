@@ -22,7 +22,7 @@ sample factorizations, calculates instability index, and plots instability
 against K
 
 ============================
-Demo/data/WuExampleExpression.csv
+Demo/WuExampleExpression.csv
 ============================
 sample dataset (also available for download `here
 <http://insitu.fruitfly.org/cgi-bin/ex/insitu.pl?t=html&p=downloads>`_)
