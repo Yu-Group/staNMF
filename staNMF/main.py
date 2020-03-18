@@ -127,7 +127,7 @@ def HungrianError(correlation):
     '''
 
     n, m = correlation.shape
-    n, m = correlation.shape
+    correlation = np.absolute(correlation)  # ignore the sign of corr
     x, y = linear_sum_assignment(-correlation)
     distM = np.mean([1 - correlation[xx, yy] for xx, yy in zip(x, y)])
     return distM
