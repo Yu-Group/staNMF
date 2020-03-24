@@ -294,7 +294,8 @@ class staNMF:
                 pool.starmap(f, parameters, chunksize=self.chunksize)
 
         self.NMF_finished = True
-        pool.close()
+        if self.parallel:
+            pool.close()
 
     def instability(self, tag, k1=0, k2=0):
         '''
