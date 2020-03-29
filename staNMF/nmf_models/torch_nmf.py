@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
 from torch.utils import data
-
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 # define model autoencoder
 class Encoder(th.nn.Module):
@@ -121,7 +121,7 @@ class torch_nmf(BaseEstimator):
         batch_size=1000,
         random_init_max=1e-4,
         init_patterns=None,
-        beta1=0.5,
+        beta1=0.9,
         beta2=0.999,
         cpu_workers=4,
         shuffle=True,
@@ -129,6 +129,8 @@ class torch_nmf(BaseEstimator):
         device='auto',
         random_state=None,
         record=True,
+        use_scheduler=True,
+        scheduler_patience=10,
     ):
         self.n_features = n_features
         self.n_neurons1 = n_neurons1
@@ -145,6 +147,8 @@ class torch_nmf(BaseEstimator):
         self.beta2 = beta2
         self.random_state = random_state
         self.record = record
+        self.use_scheduler = use_scheduler
+        self.scheduler_patience = scheduler_patience
         if device == 'auto':
             use_cuda = th.cuda.is_available()
             self.device = th.device("cuda:0" if use_cuda else "cpu")
@@ -199,19 +203,17 @@ class torch_nmf(BaseEstimator):
             random_init_max=self.random_init_max,
             init_patterns=self.init_patterns,
             )
-        self.optim_encoder_ = th.optim.Adam(
-            params=self.encoder_.parameters(),
+        self.optim_ = th.optim.Adam(
+            params=(list(self.encoder_.parameters()) 
+                    + list(self.decoder_.parameters())),
             lr=self.learning_rate,
             betas=(self.beta1, self.beta2),
         )
         self.loss_ = th.nn.MSELoss(reduction='mean')
-        self.optim_decoder_ = th.optim.Adam(
-            params=self.decoder_.parameters(),
-            lr=self.learning_rate,
-            betas=(self.beta1, self.beta2),
-            weight_decay = 0,  # weight decay is L2 penalty
-        )
-
+        if self.use_scheduler:
+            self.scheduler_ = ReduceLROnPlateau(
+                self.optim_,
+                patience=self.scheduler_patience)
         for epoch in range(self.max_epochs):
             for batch in train_loader:
                 self.encoder_.zero_grad()  # zero out the gradient
@@ -221,8 +223,11 @@ class torch_nmf(BaseEstimator):
                 preds = self.decoder_(coefs)
                 obj = self.loss_(preds, batch)
                 obj.backward()
-                self.optim_encoder_.step()
-                self.optim_decoder_.step()
+                self.optim_.step()
+            if self.use_scheduler:
+                preds = self.decoder_(self.encoder_(training_set.X))
+                obj = self.loss_(preds, training_set.X)
+                self.scheduler_.step(obj)
             if self.record:
                 preds = self.decoder_(self.encoder_(training_set.X))
                 obj = self.loss_(preds, training_set.X)
