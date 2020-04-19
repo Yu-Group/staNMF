@@ -4,7 +4,6 @@ import shutil
 import sys
 import warnings
 import sklearn.preprocessing
-from multiprocessing import Pool
 import numpy as np
 from joblib import load, dump
 import pandas as pd
@@ -189,10 +188,10 @@ class staNMF:
         if fileID file already contains factorization solutions for X in your
         range [K1, K2], set to True.
 
-    parallel : bool, optional with default False
-        True if NMF is to be run in parallel such that the instability
-        calculation should write a file for each K containing its instability
-        index.
+    parallel_mode : Str, optional with default "sequential"
+        "sequential": Each task runs sequentially.
+        "multiprocessing": Use multiprocessing for parallel computation.
+        "pyspark": Use pyspark to do parallel computation.
 
     chunksize : int, optional with default 10
         the smallest number of tasks to assign to each worker
@@ -201,7 +200,7 @@ class staNMF:
 
     def __init__(self, X, folderID="", K1=15, K2=30,
                  seed=123, replicates=100, processes=3,
-                 NMF_finished=False, parallel=False,
+                 NMF_finished=False, parallel_mode="sequential",
                  chunksize=10):
         warnings.filterwarnings("ignore")
         self.K1 = K1
@@ -209,7 +208,7 @@ class staNMF:
         self.seed = seed
         self.guess = np.array([])
         self.guessdict = {}
-        self.parallel = parallel
+        self.parallel_mode = parallel_mode
         self.processes = processes
         if isinstance(replicates, int):
             self.replicates = range(replicates)
@@ -254,8 +253,32 @@ class staNMF:
 
         self.NMF_finished = False
         numPatterns = np.arange(self.K1, self.K2+1)
-        if self.parallel:
+        if self.parallel_mode == "multiprocessing":
+            from multiprocessing import Pool
             pool = Pool(self.processes)
+        elif self.parallel_mode == 'pyspark':
+            import pyspark
+            from pyspark.sql.functions import (
+                pandas_udf,
+                PandasUDFType,
+                explode,
+                lit,
+                array,
+            )
+            from pyspark.sql.types import (
+                IntegerType,
+                FloatType,
+                ArrayType,
+                StructField,
+                StructType,
+            )
+            spark = pyspark.sql.SparkSession.builder \
+                .master("local") \
+                .appName("Demo") \
+                .getOrCreate()
+            sc = spark.sparkContext
+            sc.addPyFile("../staNMF/nmf_models/sklearn_nmf.py")
+
         for k in range(len(numPatterns)):
             K = numPatterns[k]
             path = (
@@ -270,7 +293,7 @@ class staNMF:
 
             print("Working on K = {}...".format(K))
 
-            if not self.parallel:
+            if self.parallel_mode == 'sequential':
                 # fit nmf_models
                 for l in self.replicates:
                     # set the number of components
@@ -286,16 +309,80 @@ class staNMF:
                     )
                     outputfilepath = os.path.join(path, outputfilename)
                     dump(nmf_model, outputfilepath)
-            else:
+            elif self.parallel_mode == 'multiprocessing':
                 parameters = [
                     (nmf_model, self.X, K, self.seed, l, path)
                     for l in self.replicates
                 ]
                 pool.starmap(f, parameters, chunksize=self.chunksize)
+            elif self.parallel_mode == 'pyspark':
+                sqlCtx = pyspark.sql.SQLContext(spark)
+                spark_df = sqlCtx.createDataFrame(
+                    pd.DataFrame(
+                        self.X,
+                        columns=['F{}'.format(i) for i in range(n)],
+                        dtype=float,
+                    )
+                )
+                seed = array([
+                    lit(i) for i in self.replicates if i % self.chunksize == 0
+                ])
+                spark_df = spark_df.withColumn("seed", seed)
+                spark_df = spark_df.withColumn("seed", explode(spark_df.seed))
+                spark_df = spark_df.repartitionByRange(self.processes,"seed")
+                K_broadcast = sc.broadcast(K)
+                params_broadcast = sc.broadcast(nmf_model.get_params())
+                chunksize_broadcast = sc.broadcast(self.chunksize)
+                output_schema = StructType([
+                    StructField('seed', IntegerType(), True),
+                    StructField('l2_error', FloatType(), True),
+                    StructField('components', ArrayType(FloatType()), True)
+                ])
+                @pandas_udf(output_schema, PandasUDFType.GROUPED_MAP)
+                def fit_sklearn_nmf(df):
+                    from sklearn_nmf import sklearn_nmf
+                    import numpy as np
+                    out = []
+                    for i in range(df.seed[0], df.seed[0] + chunksize_broadcast.value):
+                        ml = sklearn_nmf()
+                        ml.set_params(**params_broadcast.value)
+                        ml.n_components=K_broadcast.value
+                        ml.random_state=i
+                        X = np.array(df.drop("seed", axis=1))
+                        ml.fit(X)
+                        coefs = ml.transform(X)
+                        l2_error = np.sum((coefs @ ml.components_ - X) ** 2) / np.sum(X**2)
+                        out.append([ml.random_state, l2_error, ml.components_.flatten()])
+                    return pd.DataFrame(out, columns=['seed', 'l2_error', 'components'])
+                result = spark_df.groupBy("seed").apply(fit_sklearn_nmf).toPandas()
+                # Record all the results
+                # set the number of components
+                nmf_model.set_n_components(K)
+                for l in result.index:
+                    # set the random state
+                    nmf_model.random_state = result.loc[l, 'seed']
+                    nmf_model.l2_error = result.loc[l, 'l2_error']
+                    nmf_model.components_ = np.array(result.loc[l, 'components']).reshape((K, n))
+                    # write model to a joblib file in the path folder
+                    outputfilename = (
+                            "nmf_model_" + nmf_model.__class__.__name__
+                            + '_' + str(l) + ".joblib"
+                    )
+                    outputfilepath = os.path.join(path, outputfilename)
+                    dump(nmf_model, outputfilepath)
+
+            else:
+                raise ValueError(
+                    "self.parallel_mode({}) is not acceptable.".format(
+                        self.parallel_mode
+                    )
+                )
 
         self.NMF_finished = True
-        if self.parallel:
+        if self.parallel_mode == 'multiprocessing':
             pool.close()
+        elif self.parallel_mode == 'pyspark':
+            spark.stop()
 
     def instability(self, tag, k1=0, k2=0):
         '''
