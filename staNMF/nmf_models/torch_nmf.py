@@ -131,6 +131,7 @@ class torch_nmf(BaseEstimator):
         record=True,
         use_scheduler=True,
         scheduler_patience=10,
+        normalize_obj=True,
     ):
         self.n_features = n_features
         self.n_neurons1 = n_neurons1
@@ -149,6 +150,7 @@ class torch_nmf(BaseEstimator):
         self.record = record
         self.use_scheduler = use_scheduler
         self.scheduler_patience = scheduler_patience
+        self.normalize_obj=normalize_obj
         if device == 'auto':
             use_cuda = th.cuda.is_available()
             self.device = th.device("cuda:0" if use_cuda else "cpu")
@@ -221,16 +223,21 @@ class torch_nmf(BaseEstimator):
                 batch = batch.to(self.device)
                 coefs = self.encoder_(batch)
                 preds = self.decoder_(coefs)
-                obj = self.loss_(preds, batch)
+                if self.normalize_obj:
+                    obj = self.loss_(preds, batch) / batch.pow(2).mean((0,1))
+                else:
+                    obj = self.loss_(preds, batch)
                 obj.backward()
                 self.optim_.step()
-            if self.use_scheduler:
+            if self.use_scheduler or self.record:
                 preds = self.decoder_(self.encoder_(training_set.X))
-                obj = self.loss_(preds, training_set.X)
+                if self.normalize_obj:
+                    obj = self.loss_(preds, training_set.X) / training_set.X.pow(2).mean((0,1))
+                else:
+                    obj = self.loss_(preds, training_set.X)
+            if self.use_scheduler:
                 self.scheduler_.step(obj)
             if self.record:
-                preds = self.decoder_(self.encoder_(training_set.X))
-                obj = self.loss_(preds, training_set.X)
                 self.obj_list_.append(np.asscalar(obj.data.numpy()))
 
         return self.decoder_(self.encoder_(
