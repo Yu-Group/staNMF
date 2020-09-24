@@ -99,8 +99,8 @@ class Decoder(th.nn.Module):
 
 
 class mydataset(data.Dataset):
-    def __init__(self, X):
-            self.X = th.FloatTensor(X.astype('float'))
+    def __init__(self, X, device="cpu"):
+            self.X = th.FloatTensor(X.astype('float')) if device == 'cpu' else th.FloatTensor(X.astype("float")).cuda()
 
     def __len__(self):
         return len(self.X)
@@ -166,7 +166,7 @@ class torch_nmf(BaseEstimator):
         try:
             patterns = self.decoder_.patterns.abs().to('cpu')
             normed_patterns = patterns / patterns.norm(dim=1)[:, None]
-            return normed_patterns.data.numpy()
+            return normed_patterns.data.cpu().numpy()
         except:
             return None
 
@@ -184,7 +184,7 @@ class torch_nmf(BaseEstimator):
         else:
             bootstrap_X = X
 
-        training_set = mydataset(bootstrap_X)
+        training_set = mydataset(bootstrap_X, self.device)
         train_loader = data.DataLoader(
             training_set,
             batch_size=self.batch_size,
@@ -198,13 +198,13 @@ class torch_nmf(BaseEstimator):
             self.n_features, 
             num_neurons1=self.n_neurons1,
             num_neurons2=self.n_components,
-        )
+        ).to(self.device)
         self.decoder_ = Decoder(
             self.n_components,
             self.n_features,
             random_init_max=self.random_init_max,
             init_patterns=self.init_patterns,
-            )
+        ).to(self.device)
         self.optim_ = th.optim.Adam(
             params=(list(self.encoder_.parameters()) 
                     + list(self.decoder_.parameters())),
@@ -238,16 +238,16 @@ class torch_nmf(BaseEstimator):
             if self.use_scheduler:
                 self.scheduler_.step(obj)
             if self.record:
-                self.obj_list_.append(np.asscalar(obj.data.numpy()))
+                self.obj_list_.append(np.asscalar(obj.data.cpu().numpy()))
 
         return self.decoder_(self.encoder_(
-            th.FloatTensor(X.astype('float'))
-        )).data.numpy()
+            th.FloatTensor(X.astype('float')).to(self.device)
+        )).data.cpu().numpy()
 
     def fit(self, X, y=None):
         self.fit_transform(X, y)
         return self
         
     def transform(self, X):
-        training_set = mydataset(X)
-        return self.decoder_(self.encoder_(training_set.X)).data.numpy()
+        training_set = mydataset(X, self.device)
+        return self.decoder_(self.encoder_(training_set.X)).data.cpu().numpy()
